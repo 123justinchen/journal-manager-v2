@@ -185,17 +185,18 @@ class IEEEXploreScraper(BaseScraper):
                     if len(clean) > 50:
                         art["abstract"] = clean[:5000]
 
-                # More precise date (format: "08 June 2026")
-                for key in ("dateOfInsertion", "publicationDate", "onlineDate"):
-                    d = metadata.get(key, "")
-                    if d and len(d) >= 8:
+                # More precise date from detail page metadata
+                for key in ("displayPublicationDate", "publicationDate", "dateOfInsertion", "onlineDate"):
+                    d = metadata.get(key, "").strip()
+                    if not d or len(d) < 4:
+                        continue
+                    for fmt in ("%d %B %Y", "%Y-%m-%d", "%B %Y"):
                         try:
-                            art["pub_date"] = datetime.strptime(d.strip(), "%d %B %Y").strftime("%Y-%m-%d")
+                            art["pub_date"] = datetime.strptime(d, fmt).strftime("%Y-%m-%d")
+                            break
                         except ValueError:
-                            try:
-                                art["pub_date"] = datetime.strptime(d.strip()[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
-                            except ValueError:
-                                pass
+                            continue
+                    if art.get("pub_date") and art["pub_date"] != datetime.now().strftime("%Y-%m-%d"):
                         break
 
                 # Better DOI
@@ -233,23 +234,8 @@ class IEEEXploreScraper(BaseScraper):
                 logger.exception("[IEEE:%s] Detail fetch error for %s", self.code, art.get("url", "?"))
 
     def _extract_metadata(self, html):
-        """Extract xplGlobal.document.metadata JSON from article detail page."""
-        match = re.search(
-            r"xplGlobal\.document\.metadata\s*=\s*(\{.+?\})\s*;",
-            html, re.MULTILINE | re.DOTALL,
-        )
-        if not match:
-            # Try alternate patterns
-            match = re.search(
-                r"metadata\s*[:=]\s*(\{.+?\})\s*;",
-                html, re.MULTILINE | re.DOTALL,
-            )
-            if not match:
-                return None
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            return None
+        """Extract xplGlobal.document.metadata JSON by brace-counting."""
+        return _extract_ieee_metadata(html)
 
     # ── HTTP helpers ─────────────────────────────────────────────────
 
@@ -467,11 +453,13 @@ def ieee_browser_scrape(self):
                 )
 
                 if meta:
-                    for key in ("displayPublicationDate", "dateOfInsertion", "onlineDate"):
+                    for key in ("displayPublicationDate", "publicationDate", "dateOfInsertion", "onlineDate"):
                         d = meta.get(key, "").strip()
                         if d:
-                            for fmt in ("%d %B %Y", "%Y-%m-%d", "%B %Y"):
-                                for attempt in (d, d.split("-")[-1].strip(), d[:10]):
+                            for fmt in ("%d %B %Y", "%Y-%m-%d", "%B %Y", "%d-%d %B %Y"):
+                                for attempt in (d, d.split("-")[-1].strip() if "-" in d and " " in d else d, d[:10]):
+                                    if not attempt or len(attempt) < 4:
+                                        continue
                                     try:
                                         pub_date = datetime.strptime(
                                             attempt, fmt
@@ -545,15 +533,24 @@ def _make_article(title, authors, url, pub_date, vol, iss, abstract="", doi=""):
 
 
 def _extract_ieee_metadata(html):
-    m = re.search(
-        r"xplGlobal\.document\.metadata\s*=\s*(\{.+?\})\s*;",
-        html, re.DOTALL,
-    )
-    if not m:
-        m = re.search(r"metadata\s*[:=]\s*(\{.+?\})\s*;", html, re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return None
+    """Extract xplGlobal.document.metadata JSON by brace-counting (handles nested objects)."""
+    for marker in ("xplGlobal.document.metadata",):
+        idx = html.find(marker)
+        if idx == -1:
+            continue
+        start = html.find("{", idx)
+        if start == -1 or start - idx > 500:
+            continue
+        depth = 0
+        for i in range(start, min(start + 200000, len(html))):
+            ch = html[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(html[start:i + 1])
+                    except json.JSONDecodeError:
+                        return None
+    return None
