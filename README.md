@@ -37,10 +37,6 @@ pip install -r journal_app/requirements.txt
 
 # Set environment variables
 export DEEPSEEK_API_KEY="sk-xxx"       # required for translation
-export BROWSER_ADDRESS="127.0.0.1:9222" # optional: connect to existing Chrome
-
-# Start Chrome with remote debugging (optional)
-chrome.exe --remote-debugging-port=9222
 
 # Run
 python -m journal_app.app
