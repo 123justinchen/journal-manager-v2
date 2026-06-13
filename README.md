@@ -39,7 +39,8 @@ pip install -r journal_app/requirements.txt
 export DEEPSEEK_API_KEY="sk-xxx"       # required for translation
 
 # Run
-python -m journal_app.app
+cd journal_app
+python app.py
 # Open http://127.0.0.1:5050
 ```
 
